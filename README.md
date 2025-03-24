@@ -26,7 +26,7 @@ mv target/release/hyprsunset-overdrive ~/.local/bin
 Add the following to your Hyprland config file:
 
 ```
-exec-once = hyprsunset-overdrive &
+exec-once = ~/.local/bin/hyprsunset-overdrive
 ```
 
 The program will automatically enable the blue light filter when the sun is above the horizon and disable it when the sun is below the horizon.
