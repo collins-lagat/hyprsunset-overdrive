@@ -33,7 +33,7 @@ fn kill_existing_hyprsunset() -> Result<()> {
         .spawn()
         .context("Failed to kill hyprsunset")?;
 
-    print!("Waiting for hyprsunset to die...");
+    println!("Waiting for hyprsunset to die...");
     thread::sleep(Duration::from_millis(500));
 
     Ok(())
