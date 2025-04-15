@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use chrono::{Datelike, NaiveDate, NaiveTime, Utc};
 use sunrise::{Coordinates, SolarDay, SolarEvent};
 
-// Coordinates and altitude of Nairobi, Kenya
+// Coordinates of Nairobi, Kenya
 const LAT: f64 = -1.2921;
 const LON: f64 = 36.8219;
 
