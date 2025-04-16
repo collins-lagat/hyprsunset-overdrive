@@ -201,8 +201,8 @@ fn main() {
                 };
 
                 match op_result {
-                    Ok(_) => println!("Successfully set blue light filter"),
-                    Err(e) => println!("Failed to set blue light filter: {}", e),
+                    Ok(_) => println!("Successfully updated hyprsunset!"),
+                    Err(e) => println!("Failed to update hyprsunset!: {}", e),
                 }
 
                 let sleep_duration = get_duration_to_next_event(now.time(), sunrise, sunset);
