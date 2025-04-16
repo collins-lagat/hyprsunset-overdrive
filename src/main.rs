@@ -1,3 +1,5 @@
+use fs2::FileExt;
+use std::fs::File;
 use std::result::Result::{Err, Ok};
 use std::{process::Command, str::FromStr, thread, time::Duration};
 
@@ -149,33 +151,51 @@ fn disable_blue_light_filter() -> Result<()> {
 }
 
 fn main() {
-    loop {
-        let now = Utc::now();
-        let (sunrise, sunset) =
-            get_sunrise_and_sunset(LAT, LON, now.year(), now.month(), now.day());
-
-        println!("Sunrise: {:?}, Sunset: {:?}", sunrise, sunset);
-
-        let op_result = match get_part_of_day(now.time(), sunrise, sunset) {
-            ParOfDay::BeforeDaytime => enable_blue_light_filter(3000),
-            ParOfDay::Daytime => disable_blue_light_filter(),
-            ParOfDay::AfterDaytime => enable_blue_light_filter(3000),
-        };
-
-        match op_result {
-            Ok(_) => println!("Successfully set blue light filter"),
-            Err(e) => println!("Failed to set blue light filter: {}", e),
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+    let lock_path = format!("{}/hyprsunset-overdrive.lock", runtime_dir);
+    let lock_file = match File::create(&lock_path) {
+        Ok(file) => file,
+        Err(_) => {
+            println!("Failed to create lock file");
+            return;
         }
+    };
 
-        let sleep_duration = get_duration_to_next_event(now.time(), sunrise, sunset);
+    match lock_file.try_lock_exclusive() {
+        Ok(_) => {
+            println!("Lock acquired");
+            loop {
+                let now = Utc::now();
+                let (sunrise, sunset) =
+                    get_sunrise_and_sunset(LAT, LON, now.year(), now.month(), now.day());
 
-        if sleep_duration > Duration::from_secs(0) {
-            let sleep_seconds = sleep_duration.as_secs() as u64;
-            println!("Sleeping for {:.2} hours until", sleep_seconds / 3600);
-            thread::sleep(sleep_duration);
+                println!("Sunrise: {:?}, Sunset: {:?}", sunrise, sunset);
+
+                let op_result = match get_part_of_day(now.time(), sunrise, sunset) {
+                    ParOfDay::BeforeDaytime => enable_blue_light_filter(3000),
+                    ParOfDay::Daytime => disable_blue_light_filter(),
+                    ParOfDay::AfterDaytime => enable_blue_light_filter(3000),
+                };
+
+                match op_result {
+                    Ok(_) => println!("Successfully set blue light filter"),
+                    Err(e) => println!("Failed to set blue light filter: {}", e),
+                }
+
+                let sleep_duration = get_duration_to_next_event(now.time(), sunrise, sunset);
+
+                if sleep_duration > Duration::from_secs(0) {
+                    let sleep_seconds = sleep_duration.as_secs() as u64;
+                    println!("Sleeping for {:.2} hours until", sleep_seconds / 3600);
+                    thread::sleep(sleep_duration);
+                }
+
+                // Small delay to prevent re-triggering due to time drift
+                thread::sleep(Duration::from_secs(60));
+            }
         }
-
-        // Small delay to prevent re-triggering due to time drift
-        thread::sleep(Duration::from_secs(60));
+        Err(_) => {
+            println!("Failed to acquire lock. Another instance is running.");
+        }
     }
 }
