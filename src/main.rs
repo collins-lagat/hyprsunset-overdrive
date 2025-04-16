@@ -1,6 +1,10 @@
 use fs2::FileExt;
-use std::fs::File;
+use signal_hook::consts::{SIGINT, SIGTERM};
+use signal_hook::iterator::Signals;
+use std::fs::{self, File};
 use std::result::Result::{Err, Ok};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{process::Command, str::FromStr, thread, time::Duration};
 
 use anyhow::{Context, Result};
@@ -151,6 +155,24 @@ fn disable_blue_light_filter() -> Result<()> {
 }
 
 fn main() {
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+
+    let mut signals = match Signals::new([SIGINT, SIGTERM]) {
+        Ok(signals) => signals,
+        Err(e) => {
+            println!("Failed to create signal handler: {}", e);
+            return;
+        }
+    };
+
+    thread::spawn(move || {
+        for signal in signals.forever() {
+            println!("Shutdown signal received: {:?}", signal);
+            r.store(false, Ordering::SeqCst);
+        }
+    });
+
     let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
     let lock_path = format!("{}/hyprsunset-overdrive.lock", runtime_dir);
     let lock_file = match File::create(&lock_path) {
@@ -164,7 +186,8 @@ fn main() {
     match lock_file.try_lock_exclusive() {
         Ok(_) => {
             println!("Lock acquired");
-            loop {
+
+            while running.load(Ordering::SeqCst) {
                 let now = Utc::now();
                 let (sunrise, sunset) =
                     get_sunrise_and_sunset(LAT, LON, now.year(), now.month(), now.day());
@@ -184,18 +207,39 @@ fn main() {
 
                 let sleep_duration = get_duration_to_next_event(now.time(), sunrise, sunset);
 
-                if sleep_duration > Duration::from_secs(0) {
-                    let sleep_seconds = sleep_duration.as_secs() as u64;
-                    println!("Sleeping for {:.2} hours until", sleep_seconds / 3600);
-                    thread::sleep(sleep_duration);
+                let sleep_seconds = sleep_duration.as_secs() as u64;
+                println!("Sleeping for {:.2} hours until", sleep_seconds / 3600);
+
+                let mut slept_duration = Duration::from_secs(0);
+                while slept_duration < sleep_duration && running.load(Ordering::SeqCst) {
+                    thread::sleep(Duration::from_secs(1));
+                    slept_duration += Duration::from_secs(1);
+                }
+
+                if !running.load(Ordering::SeqCst) {
+                    break;
                 }
 
                 // Small delay to prevent re-triggering due to time drift
                 thread::sleep(Duration::from_secs(60));
             }
+
+            // Cleanup
+
+            // Not required, but release early
+            drop(lock_file);
+
+            match fs::remove_file(lock_path) {
+                Ok(_) => println!("Lock released"),
+                Err(e) => println!("Failed to release lock: {}", e),
+            };
+
+            println!("Cleanup complete");
+            println!("Exiting");
         }
         Err(_) => {
             println!("Failed to acquire lock. Another instance is running.");
+            println!("Exiting");
         }
     }
 }
