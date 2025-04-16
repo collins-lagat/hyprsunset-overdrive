@@ -1,10 +1,6 @@
-# hyprsunset-overdrive (Not maintained)
+# hyprsunset-overdrive
 
 A simple program to enable/disable the blue light filter on Hyprland based on sunrise and sunset in Nairobi, Kenya.
-
-# NOTE
-
-This tool isn't maintained anymore. Use [sunsetr](https://github.com/psi4j/sunsetr) instead.
 
 ## Requirements
 
@@ -34,3 +30,7 @@ exec-once = ~/.local/bin/hyprsunset-overdrive
 ```
 
 The program will automatically enable the blue light filter when the sun is above the horizon and disable it when the sun is below the horizon.
+
+## Acknowledgments
+
+This tool borrows some implementations from [sunsetr](https://github.com/psi4j/sunsetr). **sunsetr** is a great tool, as you can manually set the start and end times for the blue light filter.
