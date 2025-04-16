@@ -1,14 +1,16 @@
+use anyhow::{Context, Result, anyhow};
+use chrono::{Datelike, NaiveDate, NaiveTime, Utc};
 use fs2::FileExt;
 use signal_hook::consts::{SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 use std::fs::{self, File};
+use std::io::Write;
+use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
 use std::result::Result::{Err, Ok};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{process::Command, str::FromStr, thread, time::Duration};
-
-use anyhow::{Context, Result};
-use chrono::{Datelike, NaiveDate, NaiveTime, Utc};
+use std::{str::FromStr, thread, time::Duration};
 use sunrise::{Coordinates, SolarDay, SolarEvent};
 
 // Coordinates of Nairobi, Kenya
@@ -117,41 +119,74 @@ fn test_duration_to_next_event() {
     );
 }
 
-fn kill_existing_hyprsunset() -> Result<()> {
-    println!("Killing existing hyprsunset");
-
-    Command::new("killall")
-        .arg("hyprsunset")
-        .spawn()
-        .context("Failed to kill hyprsunset")?;
-
-    println!("Waiting for hyprsunset to die...");
-    thread::sleep(Duration::from_millis(500));
-
-    Ok(())
+struct HyprsunsetClient {
+    sock_path: PathBuf,
 }
 
-fn enable_blue_light_filter(temperature: u32) -> Result<()> {
-    kill_existing_hyprsunset().unwrap();
+impl HyprsunsetClient {
+    fn new(sock_path: PathBuf) -> Self {
+        Self { sock_path }
+    }
 
-    Command::new("hyprsunset")
-        .arg("--temperature")
-        .arg(temperature.to_string())
-        .spawn()
-        .context("Failed to start hyprsunset")?;
+    fn create_socket(&self, socket_path: &PathBuf) -> Result<UnixStream> {
+        let sock = match UnixStream::connect(socket_path) {
+            Ok(sock) => sock,
+            Err(e) => {
+                return Err(e)
+                    .context(format!("Failed to connect to socket at: {:?}", socket_path));
+            }
+        };
+        Ok(sock)
+    }
 
-    Ok(())
+    fn send_command(&mut self, command: &str) -> Result<()> {
+        let mut sock = self.create_socket(&self.sock_path)?;
+
+        // Set short timeout to prevent hanging
+        if let Err(e) = sock.set_read_timeout(Some(Duration::from_millis(500))) {
+            return Err(e).context("Failed to set read timeout");
+        };
+
+        match sock.write_all(command.as_bytes()) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e).context("Failed to send command to hyprsunset"),
+        }
+    }
+
+    fn enable(&mut self) -> Result<()> {
+        self.send_command(format!("temperature {}", 3000).as_str())
+    }
+
+    fn disable(&mut self) -> Result<()> {
+        self.send_command("identity")
+    }
 }
 
-fn disable_blue_light_filter() -> Result<()> {
-    kill_existing_hyprsunset().unwrap();
+fn get_hyprsunset_socket_path() -> Result<PathBuf> {
+    let his = match std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok() {
+        Some(env) => env,
+        None => {
+            return Err(anyhow!("HYPRSUNSET_INSTANCE_SIGNATURE not set"))
+                .context("Failed to get hyprsunset socket path");
+        }
+    };
 
-    Command::new("hyprsunset")
-        .arg("--identity")
-        .spawn()
-        .context("Failed to start hyprsunset")?;
+    let runtime_dir = match std::env::var("XDG_RUNTIME_DIR") {
+        Ok(dir) => dir,
+        Err(_) => {
+            return Err(anyhow!("XDG_RUNTIME_DIR not set"))
+                .context("Failed to get hyprsunset socket path");
+        }
+    };
 
-    Ok(())
+    let socket_path = PathBuf::from(format!("{}/hypr/{}/.hyprsunset.sock", runtime_dir, his));
+
+    if socket_path.exists() {
+        println!("Socket path exists");
+        Ok(socket_path)
+    } else {
+        Err(anyhow!("Socket path does not exist")).context("Failed to get hyprsunset socket path")
+    }
 }
 
 fn main() {
@@ -173,7 +208,13 @@ fn main() {
         }
     });
 
-    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+    let runtime_dir = match std::env::var("XDG_RUNTIME_DIR") {
+        Ok(dir) => dir,
+        Err(_) => {
+            println!("Failed to get XDG_RUNTIME_DIR");
+            return;
+        }
+    };
     let lock_path = format!("{}/hyprsunset-overdrive.lock", runtime_dir);
     let lock_file = match File::create(&lock_path) {
         Ok(file) => file,
@@ -187,6 +228,15 @@ fn main() {
         Ok(_) => {
             println!("Lock acquired");
 
+            let hyprsunset_sock_path = match get_hyprsunset_socket_path() {
+                Ok(path) => path,
+                Err(e) => {
+                    println!("Failed to get hyprsunset socket path: {}", e);
+                    return;
+                }
+            };
+            let mut client = HyprsunsetClient::new(hyprsunset_sock_path);
+
             while running.load(Ordering::SeqCst) {
                 let now = Utc::now();
                 let (sunrise, sunset) =
@@ -194,21 +244,25 @@ fn main() {
 
                 println!("Sunrise: {:?}, Sunset: {:?}", sunrise, sunset);
 
-                let op_result = match get_part_of_day(now.time(), sunrise, sunset) {
-                    ParOfDay::BeforeDaytime => enable_blue_light_filter(3000),
-                    ParOfDay::Daytime => disable_blue_light_filter(),
-                    ParOfDay::AfterDaytime => enable_blue_light_filter(3000),
+                match get_part_of_day(now.time(), sunrise, sunset) {
+                    ParOfDay::Daytime => {
+                        match client.disable() {
+                            Ok(_) => println!("Successfully disabled blue light filter"),
+                            Err(e) => println!("Failed to disable blue light filter: {}", e),
+                        };
+                    }
+                    ParOfDay::BeforeDaytime | ParOfDay::AfterDaytime => {
+                        match client.enable() {
+                            Ok(_) => println!("Successfully set blue light filter"),
+                            Err(e) => println!("Failed to set blue light filter: {}", e),
+                        };
+                    }
                 };
-
-                match op_result {
-                    Ok(_) => println!("Successfully updated hyprsunset!"),
-                    Err(e) => println!("Failed to update hyprsunset!: {}", e),
-                }
 
                 let sleep_duration = get_duration_to_next_event(now.time(), sunrise, sunset);
 
                 let sleep_seconds = sleep_duration.as_secs() as u64;
-                println!("Sleeping for {:.2} hours until", sleep_seconds / 3600);
+                println!("Sleeping for {:.2} hours", sleep_seconds / 3600);
 
                 let mut slept_duration = Duration::from_secs(0);
                 while slept_duration < sleep_duration && running.load(Ordering::SeqCst) {
