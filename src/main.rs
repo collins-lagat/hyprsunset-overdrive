@@ -143,7 +143,7 @@ fn disable_blue_light_filter() -> Result<()> {
     kill_existing_hyprsunset().unwrap();
 
     Command::new("hyprsunset")
-        .arg("--idenity")
+        .arg("--identity")
         .spawn()
         .context("Failed to start hyprsunset")?;
 
