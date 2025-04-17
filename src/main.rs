@@ -10,7 +10,7 @@ use simplelog::{
 use std::fs::{self, File};
 use std::io::Write;
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::result::Result::{Err, Ok};
 use std::sync::Arc;
@@ -170,28 +170,35 @@ impl HyprsunsetClient {
 fn get_hyprsunset_socket_path() -> Result<PathBuf> {
     let his = match std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok() {
         Some(env) => env,
-        None => {
-            return Err(anyhow!("HYPRSUNSET_INSTANCE_SIGNATURE not set"))
-                .context("Failed to get hyprsunset socket path");
-        }
+        None => return Err(anyhow!("HYPRSUNSET_INSTANCE_SIGNATURE not set")),
     };
 
     let runtime_dir = match std::env::var("XDG_RUNTIME_DIR") {
         Ok(dir) => dir,
-        Err(_) => {
-            return Err(anyhow!("XDG_RUNTIME_DIR not set"))
-                .context("Failed to get hyprsunset socket path");
-        }
+        Err(_) => return Err(anyhow!("XDG_RUNTIME_DIR not set")),
     };
 
     let socket_path = PathBuf::from(format!("{}/hypr/{}/.hyprsunset.sock", runtime_dir, his));
 
-    if socket_path.exists() {
-        info!("Socket path exists");
-        Ok(socket_path)
-    } else {
-        Err(anyhow!("Socket path does not exist")).context("Failed to get hyprsunset socket path")
+    match wait_for_hyprsunset_socket(&socket_path) {
+        Ok(_) => Ok(socket_path),
+        Err(e) => Err(e).context("Failed to wait for hyprsunset socket"),
     }
+}
+
+fn wait_for_hyprsunset_socket(socket_path: &Path) -> Result<()> {
+    let mut tries = 0;
+    while tries < 10 {
+        if socket_path.exists() {
+            info!("Socket path exists");
+            return Ok(());
+        }
+        tries += 1;
+        info!("Socket path does not exist. Waiting 1 second");
+        thread::sleep(Duration::from_secs(1));
+    }
+
+    anyhow::bail!("hyprsunset did not create socket");
 }
 
 fn verify_hyprsunset_is_installed() -> Result<()> {
