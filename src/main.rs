@@ -1,8 +1,12 @@
 use anyhow::{Context, Result, anyhow};
 use chrono::{Datelike, NaiveDate, NaiveTime, Utc};
 use fs2::FileExt;
+use log::{error, info};
 use signal_hook::consts::{SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
+use simplelog::{
+    ColorChoice, CombinedLogger, Config, LevelFilter, TermLogger, TerminalMode, WriteLogger,
+};
 use std::fs::{self, File};
 use std::io::Write;
 use std::os::unix::net::UnixStream;
@@ -182,28 +186,61 @@ fn get_hyprsunset_socket_path() -> Result<PathBuf> {
     let socket_path = PathBuf::from(format!("{}/hypr/{}/.hyprsunset.sock", runtime_dir, his));
 
     if socket_path.exists() {
-        println!("Socket path exists");
+        info!("Socket path exists");
         Ok(socket_path)
     } else {
         Err(anyhow!("Socket path does not exist")).context("Failed to get hyprsunset socket path")
     }
 }
 
+fn setup_logging() {
+    let runtime_dir = match std::env::var("XDG_RUNTIME_DIR") {
+        Ok(dir) => dir,
+        Err(_) => {
+            println!("Failed to get XDG_RUNTIME_DIR when setting up logging");
+            return;
+        }
+    };
+
+    let log_path = format!("{}/hyprsunset-overdrive.log", runtime_dir);
+    let log_file = match File::create(log_path) {
+        Ok(file) => file,
+        Err(_) => {
+            println!("Failed to create log file when setting up logging");
+            return;
+        }
+    };
+
+    if let Err(e) = CombinedLogger::init(vec![
+        TermLogger::new(
+            LevelFilter::Info,
+            Config::default(),
+            TerminalMode::Mixed,
+            ColorChoice::Auto,
+        ),
+        WriteLogger::new(LevelFilter::Info, Config::default(), log_file),
+    ]) {
+        println!("Failed to initialize logging: {}", e);
+    };
+}
+
 fn main() {
+    setup_logging();
+
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
 
     let mut signals = match Signals::new([SIGINT, SIGTERM]) {
         Ok(signals) => signals,
         Err(e) => {
-            println!("Failed to create signal handler: {}", e);
+            error!("Failed to create signal handler: {}", e);
             return;
         }
     };
 
     thread::spawn(move || {
         for signal in signals.forever() {
-            println!("Shutdown signal received: {:?}", signal);
+            info!("Shutdown signal received: {:?}", signal);
             r.store(false, Ordering::SeqCst);
         }
     });
@@ -211,7 +248,7 @@ fn main() {
     let runtime_dir = match std::env::var("XDG_RUNTIME_DIR") {
         Ok(dir) => dir,
         Err(_) => {
-            println!("Failed to get XDG_RUNTIME_DIR");
+            error!("Failed to get XDG_RUNTIME_DIR");
             return;
         }
     };
@@ -219,19 +256,19 @@ fn main() {
     let lock_file = match File::create(&lock_path) {
         Ok(file) => file,
         Err(_) => {
-            println!("Failed to create lock file");
+            error!("Failed to create lock file");
             return;
         }
     };
 
     match lock_file.try_lock_exclusive() {
         Ok(_) => {
-            println!("Lock acquired");
+            info!("Lock acquired");
 
             let hyprsunset_sock_path = match get_hyprsunset_socket_path() {
                 Ok(path) => path,
                 Err(e) => {
-                    println!("Failed to get hyprsunset socket path: {}", e);
+                    error!("Failed to get hyprsunset socket path: {}", e);
                     return;
                 }
             };
@@ -242,19 +279,19 @@ fn main() {
                 let (sunrise, sunset) =
                     get_sunrise_and_sunset(LAT, LON, now.year(), now.month(), now.day());
 
-                println!("Sunrise: {:?}, Sunset: {:?}", sunrise, sunset);
+                info!("Sunrise: {:?}, Sunset: {:?}", sunrise, sunset);
 
                 match get_part_of_day(now.time(), sunrise, sunset) {
                     ParOfDay::Daytime => {
                         match client.disable() {
-                            Ok(_) => println!("Successfully disabled blue light filter"),
-                            Err(e) => println!("Failed to disable blue light filter: {}", e),
+                            Ok(_) => info!("Successfully disabled blue light filter"),
+                            Err(e) => error!("Failed to disable blue light filter: {}", e),
                         };
                     }
                     ParOfDay::BeforeDaytime | ParOfDay::AfterDaytime => {
                         match client.enable() {
-                            Ok(_) => println!("Successfully set blue light filter"),
-                            Err(e) => println!("Failed to set blue light filter: {}", e),
+                            Ok(_) => info!("Successfully set blue light filter"),
+                            Err(e) => error!("Failed to set blue light filter: {}", e),
                         };
                     }
                 };
@@ -262,7 +299,7 @@ fn main() {
                 let sleep_duration = get_duration_to_next_event(now.time(), sunrise, sunset);
 
                 let sleep_seconds = sleep_duration.as_secs() as u64;
-                println!("Sleeping for {:.2} hours", sleep_seconds / 3600);
+                info!("Sleeping for {:.2} hours", sleep_seconds / 3600);
 
                 let mut slept_duration = Duration::from_secs(0);
                 while slept_duration < sleep_duration && running.load(Ordering::SeqCst) {
@@ -284,16 +321,16 @@ fn main() {
             drop(lock_file);
 
             match fs::remove_file(lock_path) {
-                Ok(_) => println!("Lock released"),
-                Err(e) => println!("Failed to release lock: {}", e),
+                Ok(_) => info!("Lock released"),
+                Err(e) => error!("Failed to release lock: {}", e),
             };
 
-            println!("Cleanup complete");
-            println!("Exiting");
+            info!("Cleanup complete");
+            info!("Exiting");
         }
         Err(_) => {
-            println!("Failed to acquire lock. Another instance is running.");
-            println!("Exiting");
+            error!("Failed to acquire lock. Another instance is running.");
+            error!("Exiting");
         }
     }
 }
