@@ -11,6 +11,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::process::Command;
 use std::result::Result::{Err, Ok};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -193,6 +194,38 @@ fn get_hyprsunset_socket_path() -> Result<PathBuf> {
     }
 }
 
+fn verify_hyprsunset_is_installed() -> Result<()> {
+    match Command::new("which").arg("hyprsunset").output() {
+        Ok(output) => {
+            if !output.status.success() {
+                anyhow::bail!("hyprsunset is not installed");
+            };
+            info!("hyprsunset is installed");
+            Ok(())
+        }
+        Err(e) => anyhow::bail!("Failed to check if hyprsunset is installed: {}", e),
+    }
+}
+
+fn wait_for_hyprsunset_to_start() -> Result<()> {
+    let mut tries = 0;
+    while tries < 10 {
+        match Command::new("hyprsunset").arg("--help").output() {
+            Ok(output) => {
+                if output.status.success() {
+                    info!("hyprsunset is running");
+                    return Ok(());
+                }
+            }
+            Err(e) => anyhow::bail!("Failed to check if hyprsunset is running: {}", e),
+        }
+        tries += 1;
+        info!("hyprsunset is not running. Waiting 1 second");
+        thread::sleep(Duration::from_secs(1));
+    }
+    anyhow::bail!("hyprsunset failed to start");
+}
+
 fn setup_logging() {
     let runtime_dir = match std::env::var("XDG_RUNTIME_DIR") {
         Ok(dir) => dir,
@@ -226,6 +259,20 @@ fn setup_logging() {
 
 fn main() {
     setup_logging();
+    match verify_hyprsunset_is_installed() {
+        Ok(_) => {}
+        Err(e) => {
+            error!("Failed to verify hyprsunset is installed: {}", e);
+            return;
+        }
+    };
+    match wait_for_hyprsunset_to_start() {
+        Ok(_) => {}
+        Err(e) => {
+            error!("Failed to wait for hyprsunset to start: {}", e);
+            return;
+        }
+    };
 
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
