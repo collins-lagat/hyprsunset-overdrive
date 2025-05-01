@@ -29,6 +29,19 @@ Add the following to your Hyprland config file:
 exec-once = ~/.local/bin/hyprsunset-overdrive
 ```
 
+### Configuration
+
+You can configure the program by editing it's config file found in `~/.config/hypr/hyprsunset-overdrive.toml`. The default config is as follows:
+
+```toml
+temperature = 3000
+# Coordinates for Nairobi, Kenya
+latitude = -1.2921
+longitude = 36.8219
+```
+
+The `temperature` option sets the color temperature of the blue light filter. The `latitude` and `longitude` options set the location of the sunrise and sunset calculations.
+
 The program will automatically enable the blue light filter when the sun is above the horizon and disable it when the sun is below the horizon.
 
 ## Acknowledgments

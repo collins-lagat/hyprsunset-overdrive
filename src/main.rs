@@ -1,12 +1,3 @@
-use anyhow::{Context, Result, anyhow};
-use chrono::{Datelike, NaiveDate, NaiveTime, Utc};
-use fs2::FileExt;
-use log::{error, info};
-use signal_hook::consts::{SIGINT, SIGTERM};
-use signal_hook::iterator::Signals;
-use simplelog::{
-    ColorChoice, CombinedLogger, Config, LevelFilter, TermLogger, TerminalMode, WriteLogger,
-};
 use std::fs::{self, File};
 use std::io::Write;
 use std::os::unix::net::UnixStream;
@@ -16,11 +7,68 @@ use std::result::Result::{Err, Ok};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{str::FromStr, thread, time::Duration};
+
+use anyhow::{Context, Result, anyhow};
+use chrono::{Datelike, NaiveDate, NaiveTime, Utc};
+use fs2::FileExt;
+use log::{error, info};
+use serde::Deserialize;
+use signal_hook::consts::{SIGINT, SIGTERM};
+use signal_hook::iterator::Signals;
+use simplelog::{
+    ColorChoice, CombinedLogger, Config as LogConfig, LevelFilter, TermLogger, TerminalMode,
+    WriteLogger,
+};
 use sunrise::{Coordinates, SolarDay, SolarEvent};
 
-// Coordinates of Nairobi, Kenya
-const LAT: f64 = -1.2921;
-const LON: f64 = 36.8219;
+#[derive(Debug, Deserialize)]
+struct Config {
+    temperature: i32,
+    latitude: f64,
+    longitude: f64,
+}
+
+impl Config {
+    fn load() -> Result<Self> {
+        let config_path = match dirs::config_dir() {
+            Some(dir) => dir.join("hypr").join("hyprsunset-overdrive.toml"),
+            None => {
+                return Err(anyhow!("Failed to find config directory"));
+            }
+        };
+
+        if !config_path.exists() {
+            if let Some(parent) = config_path.parent() {
+                std::fs::create_dir_all(parent).context("Failed to create config directory")?;
+            };
+
+            let default_config = r#"temperature = 3000
+# Coordinates for Nairobi, Kenya
+latitude = -1.2921
+longitude = 36.8219
+            "#;
+
+            match fs::write(&config_path, default_config) {
+                Ok(_) => info!("Created default config file"),
+                Err(e) => return Err(e).context("Failed to create default config file"),
+            };
+        }
+
+        let config_contents = match fs::read_to_string(&config_path) {
+            Ok(config_str) => config_str,
+            Err(_) => return Err(anyhow!("Failed to read config file")),
+        };
+
+        let config: Config = match toml::from_str(&config_contents) {
+            Ok(config) => config,
+            Err(_) => return Err(anyhow!("Failed to parse config file")),
+        };
+
+        info!("Config loaded");
+
+        Ok(config)
+    }
+}
 
 #[derive(PartialEq, Debug)]
 enum ParOfDay {
@@ -158,8 +206,8 @@ impl HyprsunsetClient {
         }
     }
 
-    fn enable(&mut self) -> Result<()> {
-        self.send_command(format!("temperature {}", 3000).as_str())
+    fn enable(&mut self, temperature: i32) -> Result<()> {
+        self.send_command(format!("temperature {}", temperature).as_str())
     }
 
     fn disable(&mut self) -> Result<()> {
@@ -254,11 +302,11 @@ fn setup_logging() {
     if let Err(e) = CombinedLogger::init(vec![
         TermLogger::new(
             LevelFilter::Info,
-            Config::default(),
+            LogConfig::default(),
             TerminalMode::Mixed,
             ColorChoice::Auto,
         ),
-        WriteLogger::new(LevelFilter::Info, Config::default(), log_file),
+        WriteLogger::new(LevelFilter::Info, LogConfig::default(), log_file),
     ]) {
         println!("Failed to initialize logging: {}", e);
     };
@@ -319,6 +367,14 @@ fn main() {
         Ok(_) => {
             info!("Lock acquired");
 
+            let config = match Config::load() {
+                Ok(config) => config,
+                Err(e) => {
+                    error!("Failed to load config: {}", e);
+                    return;
+                }
+            };
+
             let hyprsunset_sock_path = match get_hyprsunset_socket_path() {
                 Ok(path) => path,
                 Err(e) => {
@@ -330,8 +386,13 @@ fn main() {
 
             while running.load(Ordering::SeqCst) {
                 let now = Utc::now();
-                let (sunrise, sunset) =
-                    get_sunrise_and_sunset(LAT, LON, now.year(), now.month(), now.day());
+                let (sunrise, sunset) = get_sunrise_and_sunset(
+                    config.latitude,
+                    config.longitude,
+                    now.year(),
+                    now.month(),
+                    now.day(),
+                );
 
                 info!("Sunrise: {:?}, Sunset: {:?}", sunrise, sunset);
 
@@ -343,7 +404,7 @@ fn main() {
                         };
                     }
                     ParOfDay::BeforeDaytime | ParOfDay::AfterDaytime => {
-                        match client.enable() {
+                        match client.enable(config.temperature) {
                             Ok(_) => info!("Successfully set blue light filter"),
                             Err(e) => error!("Failed to set blue light filter: {}", e),
                         };
