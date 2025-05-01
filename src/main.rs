@@ -26,6 +26,7 @@ struct Config {
     temperature: i32,
     latitude: f64,
     longitude: f64,
+    altitude: f64,
 }
 
 impl Config {
@@ -46,6 +47,8 @@ impl Config {
 # Coordinates for Nairobi, Kenya
 latitude = -1.2921
 longitude = 36.8219
+# Altitude of Nairobi, Kenya in meters. You can set it as 0.
+altitude = 1795
             "#;
 
             match fs::write(&config_path, default_config) {
@@ -80,6 +83,7 @@ enum ParOfDay {
 fn get_sunrise_and_sunset(
     latitude: f64,
     longitude: f64,
+    altitude: f64,
     year: i32,
     month: u32,
     day: u32,
@@ -87,7 +91,7 @@ fn get_sunrise_and_sunset(
     let date = NaiveDate::from_ymd_opt(year, month, day).unwrap();
     let coord = Coordinates::new(latitude, longitude).unwrap();
 
-    let solarday = SolarDay::new(coord, date);
+    let solarday = SolarDay::new(coord, date).with_altitude(altitude);
 
     let sunrise = solarday.event_time(SolarEvent::Sunrise).time();
     let sunset = solarday.event_time(SolarEvent::Sunset).time();
@@ -122,14 +126,14 @@ fn get_duration_to_next_event(time: NaiveTime, sunrise: NaiveTime, sunset: Naive
 
 #[test]
 fn test_get_sunrise_and_sunset() {
-    let (sunrise, sunset) = get_sunrise_and_sunset(0., 0., 1970, 1, 1);
+    let (sunrise, sunset) = get_sunrise_and_sunset(0., 0., 0., 1970, 1, 1);
     assert_eq!(sunrise, NaiveTime::from_str("05:59:54").unwrap());
     assert_eq!(sunset, NaiveTime::from_str("18:07:08").unwrap());
 }
 
 #[test]
 fn test_get_part_of_day() {
-    let (sunrise, sunset) = get_sunrise_and_sunset(0., 0., 1970, 1, 1);
+    let (sunrise, sunset) = get_sunrise_and_sunset(0., 0., 0., 1970, 1, 1);
 
     let before_daytime: NaiveTime = NaiveTime::from_str("01:30:00").unwrap();
     let daytime: NaiveTime = NaiveTime::from_str("10:30:00").unwrap();
@@ -150,7 +154,7 @@ fn test_get_part_of_day() {
 
 #[test]
 fn test_duration_to_next_event() {
-    let (sunrise, sunset) = get_sunrise_and_sunset(0., 0., 1970, 1, 1);
+    let (sunrise, sunset) = get_sunrise_and_sunset(0., 0., 0., 1970, 1, 1);
 
     let before_daytime: NaiveTime = NaiveTime::from_str("01:30:00").unwrap();
     let daytime: NaiveTime = NaiveTime::from_str("10:30:00").unwrap();
@@ -389,6 +393,7 @@ fn main() {
                 let (sunrise, sunset) = get_sunrise_and_sunset(
                     config.latitude,
                     config.longitude,
+                    config.altitude,
                     now.year(),
                     now.month(),
                     now.day(),

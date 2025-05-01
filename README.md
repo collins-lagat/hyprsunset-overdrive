@@ -38,6 +38,8 @@ temperature = 3000
 # Coordinates for Nairobi, Kenya
 latitude = -1.2921
 longitude = 36.8219
+# Altitude of Nairobi, Kenya in meters. You can set it as 0.
+altitude = 1795
 ```
 
 The `temperature` option sets the color temperature of the blue light filter. The `latitude` and `longitude` options set the location of the sunrise and sunset calculations.
