@@ -14,6 +14,6 @@ log = "0.4.27"
 serde = { version = "1.0.219", features = ["derive"] }
 signal-hook = "0.3.17"
 simplelog = "0.12.2"
-sunrise = "1.2.1"
+sunrise = "2.0.0"
 toml = "0.8.22"
 tray-icon = "0.20.1"
