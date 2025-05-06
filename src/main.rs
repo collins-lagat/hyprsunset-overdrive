@@ -379,6 +379,56 @@ fn main() {
                 }
             };
 
+            // We need gtk in order to build the tray icon in linux.
+            // Without gtk, the tray icon build will fail. You'll see an error
+            // message in the terminal.
+            // Also, this will be spawned in a separate thread as calling gtk::main()
+            // will block the main thread.
+            std::thread::spawn(|| {
+                use tray_icon::{Icon, TrayIconBuilder, menu::Menu};
+
+                gtk::init().unwrap();
+
+                let image_bytes = include_bytes!("../assets/icon.png");
+                let image_buff = match image::load_from_memory(image_bytes) {
+                    Ok(image_dyn) => image_dyn.into_rgba8(),
+                    Err(e) => {
+                        error!("Failed to load icon: {}", e);
+                        return;
+                    }
+                };
+
+                let (width, height) = image_buff.dimensions();
+                let icon_rgba = image_buff.into_raw();
+
+                let icon = match Icon::from_rgba(icon_rgba, width, height) {
+                    Ok(icon) => icon,
+                    Err(e) => {
+                        error!("Failed to create icon: {}", e);
+                        return;
+                    }
+                };
+
+                // Contrary to what the documentation says, tray icons without
+                // menus are not displayed on linux. Therefore, we need to add
+                // an empty menu to the tray icon.
+                // See: https://github.com/libsdl-org/SDL/issues/12092
+
+                let menu = Menu::new();
+
+                if let Err(e) = TrayIconBuilder::new()
+                    .with_menu(Box::new(menu))
+                    .with_tooltip("Hyprsunset Overdrive")
+                    .with_icon(icon)
+                    .build()
+                {
+                    error!("Failed to build tray icon: {}", e);
+                    return;
+                }
+
+                gtk::main();
+            });
+
             let hyprsunset_sock_path = match get_hyprsunset_socket_path() {
                 Ok(path) => path,
                 Err(e) => {
