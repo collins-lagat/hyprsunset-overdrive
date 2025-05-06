@@ -418,7 +418,6 @@ fn main() {
 
                 if let Err(e) = TrayIconBuilder::new()
                     .with_menu(Box::new(menu))
-                    .with_tooltip("Hyprsunset Overdrive")
                     .with_icon(icon)
                     .build()
                 {
