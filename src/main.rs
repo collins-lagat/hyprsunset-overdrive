@@ -409,9 +409,9 @@ fn main() {
                     }
                 };
 
-                // Contrary to what the documentation says, tray icons without
-                // menus are not displayed on linux. Therefore, we need to add
-                // an empty menu to the tray icon.
+                // Tray icons withoutmenus are not displayed on linux.
+                // Therefore, we need to addan empty menu to the tray icon.
+                // See: https://github.com/tauri-apps/tray-icon/blob/97723fd207add9c3bb0511cb0e4d04d8652a0027/src/lib.rs#L255
                 // See: https://github.com/libsdl-org/SDL/issues/12092
 
                 let menu = Menu::new();
