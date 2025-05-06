@@ -416,14 +416,20 @@ fn main() {
 
                 let menu = Menu::new();
 
-                if let Err(e) = TrayIconBuilder::new()
-                    .with_menu(Box::new(menu))
-                    .with_icon(icon)
-                    .build()
-                {
-                    error!("Failed to build tray icon: {}", e);
+                let tray_icon = match TrayIconBuilder::new().with_menu(Box::new(menu)).build() {
+                    Ok(icon) => icon,
+                    Err(e) => {
+                        error!("Failed to build tray icon: {}", e);
+                        return;
+                    }
+                };
+
+                // HACK: somehow, when building the tray icon, the icon fails to load.
+                // This is a workaround to set the icon after the tray icon is built.
+                if let Err(e) = tray_icon.set_icon(Some(icon)) {
+                    error!("Failed to set icon: {}", e);
                     return;
-                }
+                };
 
                 gtk::main();
             });
