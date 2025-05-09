@@ -427,7 +427,7 @@ fn main() {
         let menu = Menu::new();
 
         let tray_icon = match TrayIconBuilder::new().with_menu(Box::new(menu)).build() {
-            Ok(icon) => icon,
+            Ok(tray_icon) => tray_icon,
             Err(e) => {
                 error!("Failed to build tray icon: {}", e);
                 return;
