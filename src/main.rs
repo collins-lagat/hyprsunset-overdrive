@@ -367,145 +367,143 @@ fn main() {
         }
     };
 
-    match lock_file.try_lock_exclusive() {
-        Ok(_) => {
-            info!("Lock acquired");
-
-            let config = match Config::load() {
-                Ok(config) => config,
-                Err(e) => {
-                    error!("Failed to load config: {}", e);
-                    return;
-                }
-            };
-
-            // We need gtk in order to build the tray icon in linux.
-            // Without gtk, the tray icon build will fail. You'll see an error
-            // message in the terminal.
-            // Also, this will be spawned in a separate thread as calling gtk::main()
-            // will block the main thread.
-            std::thread::spawn(|| {
-                use tray_icon::{Icon, TrayIconBuilder, menu::Menu};
-
-                gtk::init().unwrap();
-
-                let image_bytes = include_bytes!("../assets/enabled.png");
-                let image_buff = match image::load_from_memory(image_bytes) {
-                    Ok(image_dyn) => image_dyn.into_rgba8(),
-                    Err(e) => {
-                        error!("Failed to load icon: {}", e);
-                        return;
-                    }
-                };
-
-                let (width, height) = image_buff.dimensions();
-                let icon_rgba = image_buff.into_raw();
-
-                let icon = match Icon::from_rgba(icon_rgba, width, height) {
-                    Ok(icon) => icon,
-                    Err(e) => {
-                        error!("Failed to create icon: {}", e);
-                        return;
-                    }
-                };
-
-                // Tray icons withoutmenus are not displayed on linux.
-                // Therefore, we need to addan empty menu to the tray icon.
-                // See: https://github.com/tauri-apps/tray-icon/blob/97723fd207add9c3bb0511cb0e4d04d8652a0027/src/lib.rs#L255
-                // See: https://github.com/libsdl-org/SDL/issues/12092
-
-                let menu = Menu::new();
-
-                let tray_icon = match TrayIconBuilder::new().with_menu(Box::new(menu)).build() {
-                    Ok(icon) => icon,
-                    Err(e) => {
-                        error!("Failed to build tray icon: {}", e);
-                        return;
-                    }
-                };
-
-                // HACK: somehow, when building the tray icon, the icon fails to load.
-                // This is a workaround to set the icon after the tray icon is built.
-                if let Err(e) = tray_icon.set_icon(Some(icon)) {
-                    error!("Failed to set icon: {}", e);
-                    return;
-                };
-
-                gtk::main();
-            });
-
-            let hyprsunset_sock_path = match get_hyprsunset_socket_path() {
-                Ok(path) => path,
-                Err(e) => {
-                    error!("Failed to get hyprsunset socket path: {}", e);
-                    return;
-                }
-            };
-            let mut client = HyprsunsetClient::new(hyprsunset_sock_path);
-
-            while running.load(Ordering::SeqCst) {
-                let now = Utc::now();
-                let (sunrise, sunset) = get_sunrise_and_sunset(
-                    config.latitude,
-                    config.longitude,
-                    config.altitude,
-                    now.year(),
-                    now.month(),
-                    now.day(),
-                );
-
-                info!("Sunrise: {:?}, Sunset: {:?}", sunrise, sunset);
-
-                match get_part_of_day(now.time(), sunrise, sunset) {
-                    ParOfDay::Daytime => {
-                        match client.disable() {
-                            Ok(_) => info!("Successfully disabled blue light filter"),
-                            Err(e) => error!("Failed to disable blue light filter: {}", e),
-                        };
-                    }
-                    ParOfDay::BeforeDaytime | ParOfDay::AfterDaytime => {
-                        match client.enable(config.temperature) {
-                            Ok(_) => info!("Successfully set blue light filter"),
-                            Err(e) => error!("Failed to set blue light filter: {}", e),
-                        };
-                    }
-                };
-
-                let sleep_duration = get_duration_to_next_event(now.time(), sunrise, sunset);
-
-                let sleep_seconds = sleep_duration.as_secs() as u64;
-                info!("Sleeping for {:.2} hours", sleep_seconds / 3600);
-
-                let mut slept_duration = Duration::from_secs(0);
-                while slept_duration < sleep_duration && running.load(Ordering::SeqCst) {
-                    thread::sleep(Duration::from_secs(1));
-                    slept_duration += Duration::from_secs(1);
-                }
-
-                if !running.load(Ordering::SeqCst) {
-                    break;
-                }
-
-                // Small delay to prevent re-triggering due to time drift
-                thread::sleep(Duration::from_secs(60));
-            }
-
-            // Cleanup
-
-            // Not required, but release early
-            drop(lock_file);
-
-            match fs::remove_file(lock_path) {
-                Ok(_) => info!("Lock released"),
-                Err(e) => error!("Failed to release lock: {}", e),
-            };
-
-            info!("Cleanup complete");
-            info!("Exiting");
-        }
-        Err(_) => {
-            error!("Failed to acquire lock. Another instance is running.");
-            error!("Exiting");
-        }
+    if lock_file.try_lock_exclusive().is_err() {
+        error!("Failed to acquire lock. Another instance is running.");
+        error!("Exiting");
+        return;
     }
+
+    info!("Lock acquired");
+
+    let config = match Config::load() {
+        Ok(config) => config,
+        Err(e) => {
+            error!("Failed to load config: {}", e);
+            return;
+        }
+    };
+
+    // We need gtk in order to build the tray icon in linux.
+    // Without gtk, the tray icon build will fail. You'll see an error
+    // message in the terminal.
+    // Also, this will be spawned in a separate thread as calling gtk::main()
+    // will block the main thread.
+    std::thread::spawn(|| {
+        use tray_icon::{Icon, TrayIconBuilder, menu::Menu};
+
+        gtk::init().unwrap();
+
+        let image_bytes = include_bytes!("../assets/enabled.png");
+        let image_buff = match image::load_from_memory(image_bytes) {
+            Ok(image_dyn) => image_dyn.into_rgba8(),
+            Err(e) => {
+                error!("Failed to load icon: {}", e);
+                return;
+            }
+        };
+
+        let (width, height) = image_buff.dimensions();
+        let icon_rgba = image_buff.into_raw();
+
+        let icon = match Icon::from_rgba(icon_rgba, width, height) {
+            Ok(icon) => icon,
+            Err(e) => {
+                error!("Failed to create icon: {}", e);
+                return;
+            }
+        };
+
+        // Tray icons withoutmenus are not displayed on linux.
+        // Therefore, we need to addan empty menu to the tray icon.
+        // See: https://github.com/tauri-apps/tray-icon/blob/97723fd207add9c3bb0511cb0e4d04d8652a0027/src/lib.rs#L255
+        // See: https://github.com/libsdl-org/SDL/issues/12092
+
+        let menu = Menu::new();
+
+        let tray_icon = match TrayIconBuilder::new().with_menu(Box::new(menu)).build() {
+            Ok(icon) => icon,
+            Err(e) => {
+                error!("Failed to build tray icon: {}", e);
+                return;
+            }
+        };
+
+        // HACK: somehow, when building the tray icon, the icon fails to load.
+        // This is a workaround to set the icon after the tray icon is built.
+        if let Err(e) = tray_icon.set_icon(Some(icon)) {
+            error!("Failed to set icon: {}", e);
+            return;
+        };
+
+        gtk::main();
+    });
+
+    let hyprsunset_sock_path = match get_hyprsunset_socket_path() {
+        Ok(path) => path,
+        Err(e) => {
+            error!("Failed to get hyprsunset socket path: {}", e);
+            return;
+        }
+    };
+    let mut client = HyprsunsetClient::new(hyprsunset_sock_path);
+
+    while running.load(Ordering::SeqCst) {
+        let now = Utc::now();
+        let (sunrise, sunset) = get_sunrise_and_sunset(
+            config.latitude,
+            config.longitude,
+            config.altitude,
+            now.year(),
+            now.month(),
+            now.day(),
+        );
+
+        info!("Sunrise: {:?}, Sunset: {:?}", sunrise, sunset);
+
+        match get_part_of_day(now.time(), sunrise, sunset) {
+            ParOfDay::Daytime => {
+                match client.disable() {
+                    Ok(_) => info!("Successfully disabled blue light filter"),
+                    Err(e) => error!("Failed to disable blue light filter: {}", e),
+                };
+            }
+            ParOfDay::BeforeDaytime | ParOfDay::AfterDaytime => {
+                match client.enable(config.temperature) {
+                    Ok(_) => info!("Successfully set blue light filter"),
+                    Err(e) => error!("Failed to set blue light filter: {}", e),
+                };
+            }
+        };
+
+        let sleep_duration = get_duration_to_next_event(now.time(), sunrise, sunset);
+
+        let sleep_seconds = sleep_duration.as_secs() as u64;
+        info!("Sleeping for {:.2} hours", sleep_seconds / 3600);
+
+        let mut slept_duration = Duration::from_secs(0);
+        while slept_duration < sleep_duration && running.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_secs(1));
+            slept_duration += Duration::from_secs(1);
+        }
+
+        if !running.load(Ordering::SeqCst) {
+            break;
+        }
+
+        // Small delay to prevent re-triggering due to time drift
+        thread::sleep(Duration::from_secs(60));
+    }
+
+    // Cleanup
+
+    // Not required, but release early
+    drop(lock_file);
+
+    match fs::remove_file(lock_path) {
+        Ok(_) => info!("Lock released"),
+        Err(e) => error!("Failed to release lock: {}", e),
+    };
+
+    info!("Cleanup complete");
+    info!("Exiting");
 }
