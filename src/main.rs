@@ -20,6 +20,7 @@ use simplelog::{
 };
 use sunrise::{Coordinates, SolarDay, SolarEvent};
 
+const ENABLED_ICON_BYTES: &[u8] = include_bytes!("../assets/enabled.png");
 #[derive(Debug, Deserialize)]
 struct Config {
     temperature: i32,
@@ -399,8 +400,7 @@ fn main() {
 
         gtk::init().unwrap();
 
-        let image_bytes = include_bytes!("../assets/enabled.png");
-        let image_buff = match image::load_from_memory(image_bytes) {
+        let image_buff = match image::load_from_memory(ENABLED_ICON_BYTES) {
             Ok(image_dyn) => image_dyn.into_rgba8(),
             Err(e) => {
                 error!("Failed to load icon: {}", e);
