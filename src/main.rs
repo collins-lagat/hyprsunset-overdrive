@@ -19,8 +19,11 @@ use simplelog::{
     WriteLogger,
 };
 use sunrise::{Coordinates, SolarDay, SolarEvent};
+use tray_icon::Icon;
 
 const ENABLED_ICON_BYTES: &[u8] = include_bytes!("../assets/enabled.png");
+const DISABLED_ICON_BYTES: &[u8] = include_bytes!("../assets/disabled.png");
+
 #[derive(Debug, Deserialize)]
 struct Config {
     temperature: i32,
@@ -78,6 +81,12 @@ enum Message {
     Day,
     Night,
     Shutdown,
+}
+
+#[derive(Debug, PartialEq)]
+enum TrayIconMessage {
+    Day,
+    Night,
 }
 
 #[derive(PartialEq, Debug)]
@@ -323,6 +332,23 @@ fn setup_logging() {
     };
 }
 
+fn convert_bytes_to_icon(bytes: &[u8]) -> Result<Icon> {
+    let image_buff = match image::load_from_memory(bytes) {
+        Ok(image_dyn) => image_dyn.into_rgba8(),
+        Err(e) => return Err(e).context("Failed to load icon"),
+    };
+
+    let (width, height) = image_buff.dimensions();
+    let icon_rgba = image_buff.into_raw();
+
+    let icon = match Icon::from_rgba(icon_rgba, width, height) {
+        Ok(icon) => icon,
+        Err(e) => return Err(e).context("Failed to create icon"),
+    };
+
+    Ok(icon)
+}
+
 fn main() {
     setup_logging();
     match verify_hyprsunset_is_installed() {
@@ -390,31 +416,23 @@ fn main() {
         }
     };
 
+    let (gtk_tx, gtk_rx) = channel::<TrayIconMessage>();
+
     // We need gtk in order to build the tray icon in linux.
     // Without gtk, the tray icon build will fail. You'll see an error
     // message in the terminal.
     // Also, this will be spawned in a separate thread as calling gtk::main()
     // will block the main thread.
     std::thread::spawn(|| {
-        use tray_icon::{Icon, TrayIconBuilder, menu::Menu};
+        use glib;
+        use tray_icon::{TrayIconBuilder, menu::Menu};
 
         gtk::init().unwrap();
 
-        let image_buff = match image::load_from_memory(ENABLED_ICON_BYTES) {
-            Ok(image_dyn) => image_dyn.into_rgba8(),
-            Err(e) => {
-                error!("Failed to load icon: {}", e);
-                return;
-            }
-        };
-
-        let (width, height) = image_buff.dimensions();
-        let icon_rgba = image_buff.into_raw();
-
-        let icon = match Icon::from_rgba(icon_rgba, width, height) {
+        let icon = match convert_bytes_to_icon(ENABLED_ICON_BYTES) {
             Ok(icon) => icon,
             Err(e) => {
-                error!("Failed to create icon: {}", e);
+                error!("Failed to convert bytes to icon: {}", e);
                 return;
             }
         };
@@ -434,12 +452,45 @@ fn main() {
             }
         };
 
-        // HACK: somehow, when building the tray icon, the icon fails to load.
-        // This is a workaround to set the icon after the tray icon is built.
         if let Err(e) = tray_icon.set_icon(Some(icon)) {
             error!("Failed to set icon: {}", e);
             return;
         };
+
+        // Source: https://github.com/PlugOvr-ai/PlugOvr/blob/273d7ea0f00a725db5b40838e497bd3ecfe2c95e/src/ui/user_interface.rs#L313
+        glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+            while let Ok(message) = gtk_rx.try_recv() {
+                match message {
+                    TrayIconMessage::Night => {
+                        let enabled_icon = match convert_bytes_to_icon(ENABLED_ICON_BYTES) {
+                            Ok(icon) => icon,
+                            Err(e) => {
+                                error!("Failed to convert bytes to icon: {}", e);
+                                return glib::ControlFlow::Break;
+                            }
+                        };
+                        if let Err(e) = tray_icon.set_icon(Some(enabled_icon)) {
+                            error!("Failed to set icon: {}", e);
+                            return glib::ControlFlow::Break;
+                        };
+                    }
+                    TrayIconMessage::Day => {
+                        let disabled_icon = match convert_bytes_to_icon(DISABLED_ICON_BYTES) {
+                            Ok(icon) => icon,
+                            Err(e) => {
+                                error!("Failed to convert bytes to icon: {}", e);
+                                return glib::ControlFlow::Break;
+                            }
+                        };
+                        if let Err(e) = tray_icon.set_icon(Some(disabled_icon)) {
+                            error!("Failed to set icon: {}", e);
+                            return glib::ControlFlow::Break;
+                        };
+                    }
+                };
+            }
+            glib::ControlFlow::Continue
+        });
 
         gtk::main();
     });
@@ -509,12 +560,14 @@ fn main() {
                     Ok(_) => info!("Successfully disabled blue light filter"),
                     Err(e) => error!("Failed to disable blue light filter: {}", e),
                 };
+                gtk_tx.send(TrayIconMessage::Day).unwrap();
             }
             Message::Night => {
                 match client.enable(config.temperature) {
                     Ok(_) => info!("Successfully set blue light filter"),
                     Err(e) => error!("Failed to set blue light filter: {}", e),
                 };
+                gtk_tx.send(TrayIconMessage::Night).unwrap();
             }
             Message::Shutdown => {
                 break;
