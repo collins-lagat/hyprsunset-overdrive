@@ -4,8 +4,7 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::result::Result::{Err, Ok};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::channel;
 use std::{str::FromStr, thread, time::Duration};
 
 use anyhow::{Context, Result, anyhow};
@@ -71,6 +70,13 @@ altitude = 1795
 
         Ok(config)
     }
+}
+
+#[derive(Debug, PartialEq)]
+enum Message {
+    Day,
+    Night,
+    Shutdown,
 }
 
 #[derive(PartialEq, Debug)]
@@ -333,8 +339,7 @@ fn main() {
         }
     };
 
-    let running = Arc::new(AtomicBool::new(true));
-    let r = running.clone();
+    let (tx, rx) = channel::<Message>();
 
     let mut signals = match Signals::new([SIGINT, SIGTERM]) {
         Ok(signals) => signals,
@@ -344,10 +349,11 @@ fn main() {
         }
     };
 
+    let signal_tx = tx.clone();
     thread::spawn(move || {
         for signal in signals.forever() {
             info!("Shutdown signal received: {:?}", signal);
-            r.store(false, Ordering::SeqCst);
+            signal_tx.send(Message::Shutdown).unwrap();
         }
     });
 
@@ -445,53 +451,75 @@ fn main() {
             return;
         }
     };
+
+    let sunset_tx = tx.clone();
+    thread::spawn(move || {
+        loop {
+            let now = Utc::now();
+            let (sunrise, sunset) = get_sunrise_and_sunset(
+                config.latitude,
+                config.longitude,
+                config.altitude,
+                now.year(),
+                now.month(),
+                now.day(),
+            );
+
+            info!("Sunrise: {:?}, Sunset: {:?}", sunrise, sunset);
+
+            match get_part_of_day(now.time(), sunrise, sunset) {
+                ParOfDay::Daytime => {
+                    sunset_tx.send(Message::Day).unwrap();
+                }
+                ParOfDay::BeforeDaytime | ParOfDay::AfterDaytime => {
+                    sunset_tx.send(Message::Night).unwrap();
+                }
+            };
+
+            let sleep_duration = get_duration_to_next_event(now.time(), sunrise, sunset);
+
+            let sleep_seconds = sleep_duration.as_secs() as u64;
+            info!("Sleeping for {:.2} hours", sleep_seconds / 3600);
+
+            let mut slept_duration = Duration::from_secs(0);
+            while slept_duration < sleep_duration {
+                thread::sleep(Duration::from_secs(1));
+                slept_duration += Duration::from_secs(1);
+            }
+
+            // Small delay to prevent re-triggering due to time drift
+            thread::sleep(Duration::from_secs(60));
+        }
+    });
+
     let mut client = HyprsunsetClient::new(hyprsunset_sock_path);
 
-    while running.load(Ordering::SeqCst) {
-        let now = Utc::now();
-        let (sunrise, sunset) = get_sunrise_and_sunset(
-            config.latitude,
-            config.longitude,
-            config.altitude,
-            now.year(),
-            now.month(),
-            now.day(),
-        );
+    loop {
+        let message = match rx.recv() {
+            Ok(message) => message,
+            Err(e) => {
+                error!("Failed to receive message: {}", e);
+                return;
+            }
+        };
 
-        info!("Sunrise: {:?}, Sunset: {:?}", sunrise, sunset);
-
-        match get_part_of_day(now.time(), sunrise, sunset) {
-            ParOfDay::Daytime => {
+        match message {
+            Message::Day => {
                 match client.disable() {
                     Ok(_) => info!("Successfully disabled blue light filter"),
                     Err(e) => error!("Failed to disable blue light filter: {}", e),
                 };
             }
-            ParOfDay::BeforeDaytime | ParOfDay::AfterDaytime => {
+            Message::Night => {
                 match client.enable(config.temperature) {
                     Ok(_) => info!("Successfully set blue light filter"),
                     Err(e) => error!("Failed to set blue light filter: {}", e),
                 };
             }
+            Message::Shutdown => {
+                break;
+            }
         };
-
-        let sleep_duration = get_duration_to_next_event(now.time(), sunrise, sunset);
-
-        let sleep_seconds = sleep_duration.as_secs() as u64;
-        info!("Sleeping for {:.2} hours", sleep_seconds / 3600);
-
-        let mut slept_duration = Duration::from_secs(0);
-        while slept_duration < sleep_duration && running.load(Ordering::SeqCst) {
-            thread::sleep(Duration::from_secs(1));
-            slept_duration += Duration::from_secs(1);
-        }
-
-        if !running.load(Ordering::SeqCst) {
-            break;
-        }
-
-        // Small delay to prevent re-triggering due to time drift
-        thread::sleep(Duration::from_secs(60));
     }
 
     // Cleanup
