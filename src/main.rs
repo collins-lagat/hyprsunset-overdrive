@@ -389,7 +389,7 @@ fn main() {
 
                 gtk::init().unwrap();
 
-                let image_bytes = include_bytes!("../assets/icon.png");
+                let image_bytes = include_bytes!("../assets/enabled.png");
                 let image_buff = match image::load_from_memory(image_bytes) {
                     Ok(image_dyn) => image_dyn.into_rgba8(),
                     Err(e) => {
@@ -423,6 +423,13 @@ fn main() {
                         return;
                     }
                 };
+
+                println!(
+                    "path {:?}",
+                    dirs::runtime_dir()
+                        .unwrap_or_else(std::env::temp_dir)
+                        .join("tray-icon")
+                );
 
                 // HACK: somehow, when building the tray icon, the icon fails to load.
                 // This is a workaround to set the icon after the tray icon is built.
