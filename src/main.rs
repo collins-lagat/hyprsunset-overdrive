@@ -424,13 +424,6 @@ fn main() {
                     }
                 };
 
-                println!(
-                    "path {:?}",
-                    dirs::runtime_dir()
-                        .unwrap_or_else(std::env::temp_dir)
-                        .join("tray-icon")
-                );
-
                 // HACK: somehow, when building the tray icon, the icon fails to load.
                 // This is a workaround to set the icon after the tray icon is built.
                 if let Err(e) = tray_icon.set_icon(Some(icon)) {
