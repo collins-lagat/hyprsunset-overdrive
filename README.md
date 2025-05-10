@@ -33,6 +33,15 @@ Add the following to your Hyprland config file:
 exec-once = ~/.local/bin/hyprsunset-overdrive
 ```
 
+When the program is executed, it will run in the background and automatically enable the blue light filter in the evening and disable it in the morning.
+
+Additionally, it will add a tray icon if your setup allows it. When you click the icon, it will show a menu with the following options:
+
+- **Turn on** - Manually enable the blue light filter during the day.
+- **Turn off** - Manually disable the blue light filter during the day.
+
+This menu options will enable your to override the automatic behavior of the program. For example, you may be making some graphics or videos at night and may most likely require accurate colors, therefore you may want to disable the blue light filter.
+
 ### Configuration
 
 You can configure the program by editing it's config file found in `~/.config/hypr/hyprsunset-overdrive.toml`. The default config is as follows:
