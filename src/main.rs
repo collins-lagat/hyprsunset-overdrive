@@ -83,12 +83,6 @@ enum Message {
     Shutdown,
 }
 
-#[derive(Debug, PartialEq)]
-enum TrayIconMessage {
-    Day,
-    Night,
-}
-
 #[derive(PartialEq, Debug)]
 enum ParOfDay {
     BeforeDaytime,
@@ -416,7 +410,7 @@ fn main() {
         }
     };
 
-    let (gtk_tx, gtk_rx) = channel::<TrayIconMessage>();
+    let (gtk_tx, gtk_rx) = channel::<Message>();
 
     // We need gtk in order to build the tray icon in linux.
     // Without gtk, the tray icon build will fail. You'll see an error
@@ -461,7 +455,7 @@ fn main() {
         glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
             while let Ok(message) = gtk_rx.try_recv() {
                 match message {
-                    TrayIconMessage::Night => {
+                    Message::Night => {
                         let enabled_icon = match convert_bytes_to_icon(ENABLED_ICON_BYTES) {
                             Ok(icon) => icon,
                             Err(e) => {
@@ -474,7 +468,7 @@ fn main() {
                             return glib::ControlFlow::Break;
                         };
                     }
-                    TrayIconMessage::Day => {
+                    Message::Day => {
                         let disabled_icon = match convert_bytes_to_icon(DISABLED_ICON_BYTES) {
                             Ok(icon) => icon,
                             Err(e) => {
@@ -486,6 +480,9 @@ fn main() {
                             error!("Failed to set icon: {}", e);
                             return glib::ControlFlow::Break;
                         };
+                    }
+                    Message::Shutdown => {
+                        return glib::ControlFlow::Break;
                     }
                 };
             }
@@ -560,14 +557,14 @@ fn main() {
                     Ok(_) => info!("Successfully disabled blue light filter"),
                     Err(e) => error!("Failed to disable blue light filter: {}", e),
                 };
-                gtk_tx.send(TrayIconMessage::Day).unwrap();
+                gtk_tx.send(Message::Day).unwrap();
             }
             Message::Night => {
                 match client.enable(config.temperature) {
                     Ok(_) => info!("Successfully set blue light filter"),
                     Err(e) => error!("Failed to set blue light filter: {}", e),
                 };
-                gtk_tx.send(TrayIconMessage::Night).unwrap();
+                gtk_tx.send(Message::Night).unwrap();
             }
             Message::Shutdown => {
                 break;
