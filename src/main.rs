@@ -411,7 +411,7 @@ fn setup_tray_icon(main_tx: Sender<Message>) -> Sender<Message> {
         }));
 
         // Source: https://github.com/PlugOvr-ai/PlugOvr/blob/273d7ea0f00a725db5b40838e497bd3ecfe2c95e/src/ui/user_interface.rs#L313
-        glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+        glib::timeout_add_local(Duration::from_millis(100), move || {
             while let Ok(message) = rx.try_recv() {
                 match message {
                     Message::Night => {
