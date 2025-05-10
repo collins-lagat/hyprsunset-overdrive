@@ -343,7 +343,7 @@ fn convert_bytes_to_icon(bytes: &[u8]) -> Result<Icon> {
     Ok(icon)
 }
 
-fn setup_tray_icon() -> Sender<Message> {
+fn setup_tray_icon(main_tx: Sender<Message>) -> Sender<Message> {
     let (tx, rx) = channel::<Message>();
 
     // We need gtk in order to build the tray icon in linux.
@@ -351,9 +351,12 @@ fn setup_tray_icon() -> Sender<Message> {
     // message in the terminal.
     // Also, this will be spawned in a separate thread as calling gtk::main()
     // will block the main thread.
-    std::thread::spawn(|| {
+    std::thread::spawn(move || {
         use glib;
-        use tray_icon::{TrayIconBuilder, menu::Menu};
+        use tray_icon::{
+            TrayIconBuilder,
+            menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
+        };
 
         gtk::init().unwrap();
 
@@ -370,7 +373,19 @@ fn setup_tray_icon() -> Sender<Message> {
         // See: https://github.com/tauri-apps/tray-icon/blob/97723fd207add9c3bb0511cb0e4d04d8652a0027/src/lib.rs#L255
         // See: https://github.com/libsdl-org/SDL/issues/12092
 
+        let enable_item = MenuItem::with_id("enabled", "Turn on", true, None);
+        let disable_item = MenuItem::with_id("disabled", "Turn off", true, None);
+
         let menu = Menu::new();
+
+        if let Err(e) = menu.append_items(&[
+            &enable_item,
+            &PredefinedMenuItem::separator(),
+            &disable_item,
+        ]) {
+            error!("Failed to append menu item: {}", e);
+            return;
+        };
 
         let tray_icon = match TrayIconBuilder::new().with_menu(Box::new(menu)).build() {
             Ok(tray_icon) => tray_icon,
@@ -384,6 +399,16 @@ fn setup_tray_icon() -> Sender<Message> {
             error!("Failed to set icon: {}", e);
             return;
         };
+
+        MenuEvent::set_event_handler(Some(move |event: MenuEvent| match event.id().as_ref() {
+            "enabled" => {
+                main_tx.send(Message::Night).unwrap();
+            }
+            "disabled" => {
+                main_tx.send(Message::Day).unwrap();
+            }
+            _ => {}
+        }));
 
         // Source: https://github.com/PlugOvr-ai/PlugOvr/blob/273d7ea0f00a725db5b40838e497bd3ecfe2c95e/src/ui/user_interface.rs#L313
         glib::timeout_add_local(Duration::from_secs(1), move || {
@@ -401,6 +426,8 @@ fn setup_tray_icon() -> Sender<Message> {
                             error!("Failed to set icon: {}", e);
                             return glib::ControlFlow::Break;
                         };
+                        enable_item.set_enabled(false);
+                        disable_item.set_enabled(true);
                     }
                     Message::Day => {
                         let disabled_icon = match convert_bytes_to_icon(DISABLED_ICON_BYTES) {
@@ -414,6 +441,9 @@ fn setup_tray_icon() -> Sender<Message> {
                             error!("Failed to set icon: {}", e);
                             return glib::ControlFlow::Break;
                         };
+
+                        enable_item.set_enabled(true);
+                        disable_item.set_enabled(false);
                     }
                     Message::Shutdown => {
                         return glib::ControlFlow::Break;
@@ -495,7 +525,8 @@ fn main() {
         }
     };
 
-    let tray_icon_tx = setup_tray_icon();
+    let _tx = tx.clone();
+    let tray_icon_tx = setup_tray_icon(_tx);
 
     let hyprsunset_sock_path = match get_hyprsunset_socket_path() {
         Ok(path) => path,
