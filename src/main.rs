@@ -4,7 +4,7 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::result::Result::{Err, Ok};
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{Sender, channel};
 use std::{str::FromStr, thread, time::Duration};
 
 use anyhow::{Context, Result, anyhow};
@@ -343,6 +343,91 @@ fn convert_bytes_to_icon(bytes: &[u8]) -> Result<Icon> {
     Ok(icon)
 }
 
+fn setup_tray_icon() -> Sender<Message> {
+    let (tx, rx) = channel::<Message>();
+
+    // We need gtk in order to build the tray icon in linux.
+    // Without gtk, the tray icon build will fail. You'll see an error
+    // message in the terminal.
+    // Also, this will be spawned in a separate thread as calling gtk::main()
+    // will block the main thread.
+    std::thread::spawn(|| {
+        use glib;
+        use tray_icon::{TrayIconBuilder, menu::Menu};
+
+        gtk::init().unwrap();
+
+        let icon = match convert_bytes_to_icon(ENABLED_ICON_BYTES) {
+            Ok(icon) => icon,
+            Err(e) => {
+                error!("Failed to convert bytes to icon: {}", e);
+                return;
+            }
+        };
+
+        // Tray icons withoutmenus are not displayed on linux.
+        // Therefore, we need to addan empty menu to the tray icon.
+        // See: https://github.com/tauri-apps/tray-icon/blob/97723fd207add9c3bb0511cb0e4d04d8652a0027/src/lib.rs#L255
+        // See: https://github.com/libsdl-org/SDL/issues/12092
+
+        let menu = Menu::new();
+
+        let tray_icon = match TrayIconBuilder::new().with_menu(Box::new(menu)).build() {
+            Ok(tray_icon) => tray_icon,
+            Err(e) => {
+                error!("Failed to build tray icon: {}", e);
+                return;
+            }
+        };
+
+        if let Err(e) = tray_icon.set_icon(Some(icon)) {
+            error!("Failed to set icon: {}", e);
+            return;
+        };
+
+        // Source: https://github.com/PlugOvr-ai/PlugOvr/blob/273d7ea0f00a725db5b40838e497bd3ecfe2c95e/src/ui/user_interface.rs#L313
+        glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+            while let Ok(message) = rx.try_recv() {
+                match message {
+                    Message::Night => {
+                        let enabled_icon = match convert_bytes_to_icon(ENABLED_ICON_BYTES) {
+                            Ok(icon) => icon,
+                            Err(e) => {
+                                error!("Failed to convert bytes to icon: {}", e);
+                                return glib::ControlFlow::Break;
+                            }
+                        };
+                        if let Err(e) = tray_icon.set_icon(Some(enabled_icon)) {
+                            error!("Failed to set icon: {}", e);
+                            return glib::ControlFlow::Break;
+                        };
+                    }
+                    Message::Day => {
+                        let disabled_icon = match convert_bytes_to_icon(DISABLED_ICON_BYTES) {
+                            Ok(icon) => icon,
+                            Err(e) => {
+                                error!("Failed to convert bytes to icon: {}", e);
+                                return glib::ControlFlow::Break;
+                            }
+                        };
+                        if let Err(e) = tray_icon.set_icon(Some(disabled_icon)) {
+                            error!("Failed to set icon: {}", e);
+                            return glib::ControlFlow::Break;
+                        };
+                    }
+                    Message::Shutdown => {
+                        return glib::ControlFlow::Break;
+                    }
+                };
+            }
+            glib::ControlFlow::Continue
+        });
+
+        gtk::main();
+    });
+    tx
+}
+
 fn main() {
     setup_logging();
     match verify_hyprsunset_is_installed() {
@@ -410,87 +495,7 @@ fn main() {
         }
     };
 
-    let (gtk_tx, gtk_rx) = channel::<Message>();
-
-    // We need gtk in order to build the tray icon in linux.
-    // Without gtk, the tray icon build will fail. You'll see an error
-    // message in the terminal.
-    // Also, this will be spawned in a separate thread as calling gtk::main()
-    // will block the main thread.
-    std::thread::spawn(|| {
-        use glib;
-        use tray_icon::{TrayIconBuilder, menu::Menu};
-
-        gtk::init().unwrap();
-
-        let icon = match convert_bytes_to_icon(ENABLED_ICON_BYTES) {
-            Ok(icon) => icon,
-            Err(e) => {
-                error!("Failed to convert bytes to icon: {}", e);
-                return;
-            }
-        };
-
-        // Tray icons withoutmenus are not displayed on linux.
-        // Therefore, we need to addan empty menu to the tray icon.
-        // See: https://github.com/tauri-apps/tray-icon/blob/97723fd207add9c3bb0511cb0e4d04d8652a0027/src/lib.rs#L255
-        // See: https://github.com/libsdl-org/SDL/issues/12092
-
-        let menu = Menu::new();
-
-        let tray_icon = match TrayIconBuilder::new().with_menu(Box::new(menu)).build() {
-            Ok(tray_icon) => tray_icon,
-            Err(e) => {
-                error!("Failed to build tray icon: {}", e);
-                return;
-            }
-        };
-
-        if let Err(e) = tray_icon.set_icon(Some(icon)) {
-            error!("Failed to set icon: {}", e);
-            return;
-        };
-
-        // Source: https://github.com/PlugOvr-ai/PlugOvr/blob/273d7ea0f00a725db5b40838e497bd3ecfe2c95e/src/ui/user_interface.rs#L313
-        glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
-            while let Ok(message) = gtk_rx.try_recv() {
-                match message {
-                    Message::Night => {
-                        let enabled_icon = match convert_bytes_to_icon(ENABLED_ICON_BYTES) {
-                            Ok(icon) => icon,
-                            Err(e) => {
-                                error!("Failed to convert bytes to icon: {}", e);
-                                return glib::ControlFlow::Break;
-                            }
-                        };
-                        if let Err(e) = tray_icon.set_icon(Some(enabled_icon)) {
-                            error!("Failed to set icon: {}", e);
-                            return glib::ControlFlow::Break;
-                        };
-                    }
-                    Message::Day => {
-                        let disabled_icon = match convert_bytes_to_icon(DISABLED_ICON_BYTES) {
-                            Ok(icon) => icon,
-                            Err(e) => {
-                                error!("Failed to convert bytes to icon: {}", e);
-                                return glib::ControlFlow::Break;
-                            }
-                        };
-                        if let Err(e) = tray_icon.set_icon(Some(disabled_icon)) {
-                            error!("Failed to set icon: {}", e);
-                            return glib::ControlFlow::Break;
-                        };
-                    }
-                    Message::Shutdown => {
-                        return glib::ControlFlow::Break;
-                    }
-                };
-            }
-            glib::ControlFlow::Continue
-        });
-
-        gtk::main();
-    });
+    let tray_icon_tx = setup_tray_icon();
 
     let hyprsunset_sock_path = match get_hyprsunset_socket_path() {
         Ok(path) => path,
@@ -557,14 +562,14 @@ fn main() {
                     Ok(_) => info!("Successfully disabled blue light filter"),
                     Err(e) => error!("Failed to disable blue light filter: {}", e),
                 };
-                gtk_tx.send(Message::Day).unwrap();
+                tray_icon_tx.send(Message::Day).unwrap();
             }
             Message::Night => {
                 match client.enable(config.temperature) {
                     Ok(_) => info!("Successfully set blue light filter"),
                     Err(e) => error!("Failed to set blue light filter: {}", e),
                 };
-                gtk_tx.send(Message::Night).unwrap();
+                tray_icon_tx.send(Message::Night).unwrap();
             }
             Message::Shutdown => {
                 break;
