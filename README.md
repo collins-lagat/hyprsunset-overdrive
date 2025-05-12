@@ -4,6 +4,8 @@ A simple program to enable/disable the blue light filter on Hyprland based on su
 
 ![Screenshots](./assets/screenshots.png)
 
+![Demo](./assets/demo.mp4)
+
 ## Requirements
 
 - `Hyprland`
