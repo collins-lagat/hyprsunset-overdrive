@@ -2,9 +2,7 @@
 
 A simple program to enable/disable the blue light filter on Hyprland based on sunrise and sunset in Nairobi, Kenya.
 
-![Day](./assets/screenshot-1.png)
-
-![Night](./assets/screenshot-2.png)
+![Screenshots](./assets/screenshots.png)
 
 ## Requirements
 
