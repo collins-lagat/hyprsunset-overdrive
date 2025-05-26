@@ -373,8 +373,8 @@ fn setup_tray_icon(main_tx: Sender<Message>) -> Sender<Message> {
         // See: https://github.com/tauri-apps/tray-icon/blob/97723fd207add9c3bb0511cb0e4d04d8652a0027/src/lib.rs#L255
         // See: https://github.com/libsdl-org/SDL/issues/12092
 
-        let enable_item = MenuItem::with_id("enabled", "Turn on", true, None);
-        let disable_item = MenuItem::with_id("disabled", "Turn off", true, None);
+        let enable_item = MenuItem::with_id("enabled", "Night", true, None);
+        let disable_item = MenuItem::with_id("disabled", "Day", true, None);
 
         let menu = Menu::new();
 
